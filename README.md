@@ -1,95 +1,149 @@
-# 📚 RAG Document Assistant
+# 📚 Corrective RAG Document Assistant
 
-A **Retrieval-Augmented Generation (RAG) Document Assistant** that allows users to upload multiple PDF documents and ask questions about their content through a conversational Streamlit interface.
+An **Corrective Retrieval-Augmented Generation (RAG) Document Assistant** that allows users to upload multiple PDF documents and ask questions through a conversational Streamlit interface.
 
-The system evaluates whether the retrieved document context is sufficiently relevant to the user's question. Based on the retrieval quality, it can answer using:
+The system does not blindly generate an answer from retrieved documents. Instead, it evaluates the relevance of the retrieved context and dynamically decides whether the answer should be generated from:
 
-* 📚 **Uploaded document context**
-* 🌐 **Web search context**
-* 🔀 **Both document and web context**
+- 📚 Uploaded document context
+- 🌐 Web search context
+- 🔀 A combination of document and web context
 
-The RAG workflow is orchestrated using **LangGraph**, while **FAISS** is used for vector similarity search and **NVIDIA Embeddings** are used to generate document embeddings.
+The RAG workflow is orchestrated using **LangGraph**, **FAISS** is used for vector similarity search, **NVIDIA Nemotron embeddings** are used for semantic representation, and **Tavily** provides web-search fallback.
 
 ---
 
-## 🚀 Features
+# 🚀 Features
 
-### 📄 Multiple PDF Upload
+## 📄 Multiple PDF Upload
 
-Users can upload multiple PDF documents through the Streamlit interface.
+The application allows users to upload multiple PDF documents in a single session.
 
-The application:
+The system:
 
-1. Loads all uploaded PDFs.
+1. Loads the uploaded PDFs.
 2. Extracts their text.
-3. Splits the text into smaller chunks.
-4. Generates embeddings.
-5. Stores the embeddings in a FAISS vector database.
+3. Splits the documents into smaller chunks.
+4. Generates vector embeddings.
+5. Stores the embeddings in a FAISS vector store.
+6. Creates a retriever for semantic search.
 
 ---
 
-### 🔍 Semantic Document Retrieval
+## 🔍 Semantic Document Retrieval
 
 The system uses:
 
-* NVIDIA Nemotron embeddings
-* FAISS vector database
-* Similarity-based retrieval
+- NVIDIA Nemotron embeddings
+- FAISS vector store
+- Similarity-based retrieval
+- Recursive text splitting
 
-For every question, the system retrieves the most relevant document chunks.
+For every user question, the retriever searches across all uploaded documents and returns the most relevant chunks.
 
-The current configuration retrieves the top **4 chunks**.
+Current configuration:
+
+```text
+Retrieval type: similarity
+Top K: 4 chunks
+```
 
 ---
 
-### 🤖 LLM-Based Retrieval Evaluation
+# 🤖 Agentic Retrieval Evaluation
 
-Retrieved chunks are evaluated by an LLM before generating the final answer.
+A major feature of this project is the **LLM-based evaluation of retrieved documents**.
 
-Each chunk receives a relevance score between:
+Instead of directly passing retrieved chunks to the answer generator, each retrieved chunk is evaluated for relevance.
+
+Each document receives a relevance score between:
 
 ```text
 0.0 → Completely irrelevant
-1.0 → Sufficient to answer the question
+1.0 → Sufficiently relevant
 ```
 
-The system uses two thresholds:
+The current thresholds are:
 
-```text
+```python
 UPPER_TH = 0.7
 LOWER_TH = 0.3
 ```
 
-The retrieved context is classified into three states.
+Based on these scores, the system determines one of three verdicts:
 
-#### CORRECT
+```text
+CORRECT
+AMBIGUOUS
+INCORRECT
+```
 
-At least one retrieved chunk has a score greater than `0.7`.
+---
+
+# 📊 Retrieval Decision Logic
+
+## 🟢 CORRECT
+
+If **at least one retrieved document chunk has a score greater than 0.7**, the retrieved document context is considered sufficiently relevant.
+
+```text
+Retrieved Documents
+        ↓
+LLM Evaluation
+        ↓
+Score > 0.7
+        ↓
+CORRECT
+        ↓
+Generate Answer
+```
+
+The answer is generated using the relevant uploaded-document context.
+
+The Streamlit UI displays:
 
 ```text
 📚 Answer retrieved from the given document context.
 ```
 
-The answer is generated using the relevant document context.
-
 ---
 
-#### INCORRECT
+## 🟡 AMBIGUOUS
 
-All retrieved chunks have a score below `0.3`.
+If:
 
 ```text
-🌐 Answer retrieved from web context
-because the provided document context is not relevant.
+No score > 0.7
+AND
+Not all scores < 0.3
 ```
 
-The system rewrites the question into a web-search query and searches the web using Tavily.
+the retrieved context is considered partially relevant but insufficient.
 
----
+The system:
 
-#### AMBIGUOUS
+1. Keeps the relevant document chunks.
+2. Rewrites the user's question into a web-search query.
+3. Searches the web using Tavily.
+4. Combines document and web context.
+5. Generates the final answer.
 
-No chunk scores above `0.7`, but not all chunks score below `0.3`.
+```text
+Retrieved Documents
+        ↓
+LLM Evaluation
+        ↓
+AMBIGUOUS
+        ↓
+Rewrite Query
+        ↓
+Tavily Web Search
+        ↓
+Document Context + Web Context
+        ↓
+Generate Answer
+```
+
+The UI displays:
 
 ```text
 🔀 Answer generated using both the given document
@@ -97,93 +151,107 @@ context and web context because the provided context
 was not sufficient.
 ```
 
-The system performs web search and combines:
+---
+
+## 🔴 INCORRECT
+
+If **all retrieved chunks have scores below 0.3**, the uploaded document context is considered irrelevant.
+
+The system does not rely on the retrieved document context.
+
+Instead:
 
 ```text
-Relevant document chunks
-        +
-Web search results
+Retrieved Documents
+        ↓
+LLM Evaluation
+        ↓
+INCORRECT
+        ↓
+Rewrite Query
+        ↓
+Tavily Web Search
+        ↓
+Generate Answer
 ```
 
-before generating the final response.
+The UI displays:
+
+```text
+🌐 Answer retrieved from web context because the
+provided document context is not relevant.
+```
 
 ---
 
-## 🧠 System Architecture
+# 🧠 System Architecture
 
 ```text
-                    ┌──────────────────────┐
-                    │      Streamlit       │
-                    │      Frontend        │
-                    └──────────┬───────────┘
-                               │
-                         Upload PDFs
-                               │
-                               ▼
-                    ┌──────────────────────┐
-                    │ Document Processor   │
-                    └──────────┬───────────┘
-                               │
-                    ┌──────────▼───────────┐
-                    │     PDF Loader       │
-                    └──────────┬───────────┘
-                               │
-                               ▼
-                    ┌──────────────────────┐
-                    │ Recursive Text       │
-                    │ Splitter             │
-                    └──────────┬───────────┘
-                               │
-                               ▼
-                    ┌──────────────────────┐
-                    │ NVIDIA Embeddings    │
-                    └──────────┬───────────┘
-                               │
-                               ▼
-                    ┌──────────────────────┐
-                    │       FAISS          │
-                    │    Vector Store      │
-                    └──────────┬───────────┘
-                               │
-                         User Question
-                               │
-                               ▼
-                    ┌──────────────────────┐
-                    │      LangGraph       │
-                    │      RAG Pipeline    │
-                    └──────────┬───────────┘
-                               │
-                               ▼
-                    ┌──────────────────────┐
-                    │      Retrieve        │
-                    └──────────┬───────────┘
-                               │
-                               ▼
-                    ┌──────────────────────┐
-                    │ Evaluate Retrieved   │
-                    │ Documents            │
-                    └──────────┬───────────┘
-                               │
-                  ┌────────────┼────────────┐
-                  │            │            │
-                  ▼            ▼            ▼
-              CORRECT      AMBIGUOUS    INCORRECT
-                  │            │            │
-                  │            ▼            ▼
-                  │       Web Search    Web Search
-                  │            │            │
-                  │            └─────┬──────┘
-                  │                  │
-                  └────────┬─────────┘
-                           ▼
-                    ┌──────────────────────┐
-                    │    Answer Generator  │
-                    └──────────┬───────────┘
-                               │
-                               ▼
-                    ┌──────────────────────┐
-                    │ Streamlit Chat UI    │
-                    └──────────────────────┘
+                         ┌──────────────────────┐
+                         │      Streamlit       │
+                         │      Frontend        │
+                         │       app.py         │
+                         └──────────┬───────────┘
+                                    │
+                              Upload PDFs
+                                    │
+                                    ▼
+                         ┌──────────────────────┐
+                         │   retriever.py       │
+                         │                      │
+                         │ PDF Loading          │
+                         │ Text Splitting       │
+                         │ Embeddings            │
+                         │ FAISS Retriever      │
+                         └──────────┬───────────┘
+                                    │
+                                    ▼
+                         ┌──────────────────────┐
+                         │    FAISS Vector      │
+                         │        Store         │
+                         └──────────┬───────────┘
+                                    │
+                              User Question
+                                    │
+                                    ▼
+                         ┌──────────────────────┐
+                         │       back.py        │
+                         │                      │
+                         │    LangGraph RAG     │
+                         │      Pipeline        │
+                         └──────────┬───────────┘
+                                    │
+                                    ▼
+                         ┌──────────────────────┐
+                         │      Retrieve        │
+                         └──────────┬───────────┘
+                                    │
+                                    ▼
+                         ┌──────────────────────┐
+                         │ Evaluate Retrieved   │
+                         │      Documents       │
+                         └──────────┬───────────┘
+                                    │
+                      ┌─────────────┼─────────────┐
+                      │             │             │
+                      ▼             ▼             ▼
+                  CORRECT       AMBIGUOUS     INCORRECT
+                      │             │             │
+                      │             ▼             ▼
+                      │        Web Search    Web Search
+                      │             │             │
+                      │             └──────┬──────┘
+                      │                    │
+                      └──────────┬─────────┘
+                                 ▼
+                       ┌──────────────────────┐
+                       │   Answer Generator   │
+                       └──────────┬───────────┘
+                                  │
+                                  ▼
+                       ┌──────────────────────┐
+                       │   Streamlit Chat UI  │
+                       └──────────────────────┘
 ```
 
 ---
@@ -194,56 +262,65 @@ before generating the final response.
 RAG-Document-Assistant/
 │
 ├── app.py
-│
-├── document_processor.py
-│
-├── rag_pipeline.py
-│
-├── documents/
-│
-├── .env
-│
+├── retriever.py
+├── back.py
 ├── requirements.txt
-│
-└── README.md
+├── README.md
+├── .env
+├── .gitignore
+└── venv/
 ```
 
-### `app.py`
+---
 
-The Streamlit frontend.
+# 📂 File Responsibilities
+
+## `app.py`
+
+The **Streamlit frontend**.
 
 Responsible for:
 
 * PDF uploading
-* Displaying uploaded documents
+* Multiple document selection
 * Processing documents
+* Displaying uploaded document names
 * Maintaining chat history
 * Displaying user messages
 * Displaying assistant responses
 * Showing retrieval verdict
 * Showing retrieval reasoning
+* Providing the chat interface
+
+The frontend calls the retriever-building function and the LangGraph application:
+
+```python
+from back import build_retriever, app
+```
 
 ---
 
-### `document_processor.py`
+## `retriever.py`
 
-Responsible for document processing and vector database creation.
+Responsible for **document processing and semantic retrieval**.
 
 Main responsibilities:
 
 ```text
-PDF
- ↓
+PDF Files
+   ↓
 PyPDFLoader
- ↓
-Document chunks
- ↓
-Text cleaning
- ↓
+   ↓
+Document Pages
+   ↓
+RecursiveCharacterTextSplitter
+   ↓
+Text Chunks
+   ↓
 NVIDIA Embeddings
- ↓
-FAISS
- ↓
+   ↓
+FAISS Vector Store
+   ↓
 Retriever
 ```
 
@@ -253,32 +330,59 @@ Main function:
 build_retriever(pdf_paths)
 ```
 
-This function accepts multiple PDF paths.
+The function accepts multiple PDF paths, processes them, creates embeddings, builds a FAISS vector store, and stores the resulting retriever in a module-level `retriever` variable.
+
+`back.py` accesses the latest retriever instance by importing the module itself:
+
+```python
+import retriever as retriever_module
+...
+retriever_module.retriever.invoke(question)
+```
+
+This ensures `back.py` always reads the most up-to-date retriever after `build_retriever()` has been called, without needing a separate getter function.
 
 ---
 
-### `rag_pipeline.py`
+## `back.py`
 
-Contains the LangGraph RAG workflow.
+Contains the **LLM-powered Agentic RAG workflow**.
 
-Responsibilities:
+Responsible for:
 
-* Document retrieval
-* Document relevance evaluation
-* Verdict generation
-* Query rewriting
-* Web search
-* Context construction
-* Answer generation
-* LangGraph routing
+* Retrieving relevant document chunks
+* Evaluating document relevance
+* Generating retrieval verdicts
+* Rewriting web-search queries
+* Performing Tavily web search
+* Combining document and web context
+* Generating final answers
+* LangGraph state management
+* Conditional routing
+
+It also re-exports `build_retriever` (imported from `retriever.py`) alongside the compiled LangGraph application `app`, so the frontend only needs one import line.
+
+The main workflow is compiled into a LangGraph application.
 
 ---
 
-# 🔄 RAG Workflow
+# 🔄 Complete RAG Workflow
 
-When a user asks a question, the following workflow takes place.
+When a user asks a question, the application follows this process.
 
-## Step 1 — Retrieve
+## Step 1 — User Question
+
+The user enters a question through the Streamlit chat interface.
+
+Example:
+
+```text
+What is batch normalization?
+```
+
+---
+
+## Step 2 — Document Retrieval
 
 The question is passed to the FAISS retriever.
 
@@ -287,105 +391,89 @@ User Question
       ↓
 FAISS Retriever
       ↓
-Top 4 relevant chunks
+Top 4 Relevant Chunks
 ```
 
 ---
 
-## Step 2 — Evaluate Retrieved Chunks
+## Step 3 — LLM Relevance Evaluation
 
-Each retrieved chunk is sent to the LLM evaluator.
+Each retrieved chunk is evaluated by the LLM.
 
-The evaluator returns:
+The evaluator produces structured output similar to:
 
 ```json
 {
     "score": 0.85,
-    "reason": "The chunk directly discusses the requested concept."
+    "reason": "The document directly discusses the requested concept."
 }
 ```
 
-The score is between:
+The score ranges from:
 
 ```text
-0.0 and 1.0
+0.0 → 1.0
 ```
 
 ---
 
-## Step 3 — Determine Verdict
+# Step 4 — Verdict Determination
 
-### CORRECT
+The retrieved context is classified using:
 
-```text
-Any score > 0.7
+```python
+UPPER_TH = 0.7
+LOWER_TH = 0.3
 ```
 
-The document context is considered sufficiently relevant.
-
-Flow:
+Decision logic:
 
 ```text
-Retrieve
-   ↓
-Evaluate
-   ↓
+                    Retrieved Chunks
+                           │
+                           ▼
+                    Evaluate Scores
+                           │
+             ┌─────────────┼─────────────┐
+             │             │             │
+             ▼             ▼             ▼
+        Score > 0.7    Mixed Scores   All < 0.3
+             │             │             │
+             ▼             ▼             ▼
+          CORRECT      AMBIGUOUS      INCORRECT
+```
+
+---
+
+# Step 5 — Conditional Routing
+
+LangGraph decides the next step based on the verdict.
+
+```text
 CORRECT
    ↓
-Generate
+Generate using document context
 ```
 
----
-
-### INCORRECT
-
 ```text
-All scores < 0.3
-```
-
-The document context is considered irrelevant.
-
-Flow:
-
-```text
-Retrieve
-   ↓
-Evaluate
-   ↓
-INCORRECT
-   ↓
-Rewrite Query
-   ↓
-Tavily Web Search
-   ↓
-Generate
-```
-
----
-
-### AMBIGUOUS
-
-```text
-No score > 0.7
-AND
-Not all scores < 0.3
-```
-
-Flow:
-
-```text
-Retrieve
-   ↓
-Evaluate
-   ↓
 AMBIGUOUS
    ↓
 Rewrite Query
    ↓
-Tavily Web Search
+Tavily Search
    ↓
-Relevant Document Context
-        +
+Document + Web Context
+   ↓
+Generate
+```
+
+```text
+INCORRECT
+   ↓
+Rewrite Query
+   ↓
+Tavily Search
+   ↓
 Web Context
    ↓
 Generate
@@ -393,267 +481,175 @@ Generate
 
 ---
 
-# 🌐 Web Search
+# 🌐 Web Search Fallback
 
-When the uploaded document context is insufficient, the system uses **Tavily Search**.
+When document retrieval is insufficient, the system uses **Tavily Search**.
 
-Before searching, the LLM rewrites the user's question into a concise search query.
+Before searching, the LLM rewrites the original question into a concise search query.
 
-For example:
+Example:
 
 ```text
-Original:
+Original Question:
 
 What are the latest developments in transformer architectures?
 
-        ↓
+                ↓
 
-Rewritten Query:
+Rewritten Search Query:
 
 latest developments transformer architectures
 ```
 
-The rewritten query is sent to Tavily.
+The rewritten query is then sent to Tavily.
 
-The search results are converted into LangChain `Document` objects before being passed to the answer-generation stage.
-
----
-
-# 🧩 Technologies Used
-
-| Technology        | Purpose                         |
-| ----------------- | ------------------------------- |
-| Python            | Backend development             |
-| Streamlit         | Frontend / chat interface       |
-| LangChain         | LLM and RAG components          |
-| LangGraph         | RAG workflow orchestration      |
-| FAISS             | Vector similarity search        |
-| NVIDIA Embeddings | Text embeddings                 |
-| OpenRouter        | LLM provider                    |
-| Tavily            | Web search                      |
-| PyPDFLoader       | PDF document loading            |
-| Pydantic          | Structured LLM outputs          |
-| python-dotenv     | Environment variable management |
+The returned search results are converted into LangChain `Document` objects and passed to the answer-generation stage.
 
 ---
 
-# 📦 Installation
+# 📝 Answer Generation
 
-## 1. Clone the Repository
+The answer generator receives context depending on the retrieval verdict.
 
-```bash
-git clone <your-repository-url>
-```
-
-Move into the project:
-
-```bash
-cd RAG-Document-Assistant
-```
-
----
-
-## 2. Create a Virtual Environment
-
-### Windows
-
-```bash
-python -m venv venv
-```
-
-Activate it:
-
-```bash
-venv\Scripts\activate
-```
-
-### Linux / macOS
-
-```bash
-python3 -m venv venv
-```
-
-Activate it:
-
-```bash
-source venv/bin/activate
-```
-
----
-
-## 3. Install Dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
-If you don't have `requirements.txt` yet, install the main dependencies:
-
-```bash
-pip install streamlit
-pip install langchain
-pip install langchain-community
-pip install langchain-core
-pip install langchain-text-splitters
-pip install langchain-nvidia-ai-endpoints
-pip install langchain-openrouter
-pip install langgraph
-pip install faiss-cpu
-pip install pypdf
-pip install python-dotenv
-pip install tavily-python
-```
-
----
-
-# 🔐 Environment Variables
-
-Create a `.env` file in the project root.
-
-```env
-NVIDIA_API_KEY=your_nvidia_api_key
-
-OPENROUTER_API_KEY=your_openrouter_api_key
-
-TAVILY_API_KEY=your_tavily_api_key
-```
-
-Replace the values with your actual API keys.
-
-### Important
-
-Never commit `.env` to GitHub.
-
-Add this to `.gitignore`:
-
-```gitignore
-.env
-venv/
-__pycache__/
-*.pyc
-```
-
----
-
-# ▶️ Running the Application
-
-Activate your virtual environment first.
-
-Then run:
-
-```bash
-streamlit run app.py
-```
-
-Streamlit will provide a local URL similar to:
+## CORRECT
 
 ```text
-http://localhost:8501
-```
-
-Open the URL in your browser.
-
----
-
-# 💬 Using the Application
-
-## Step 1 — Upload Documents
-
-Use the sidebar:
-
-```text
-Upload PDF documents
-```
-
-Multiple PDFs can be selected at the same time.
-
-For example:
-
-```text
-📄 Machine_Learning.pdf
-📄 Deep_Learning.pdf
-📄 NLP.pdf
+Relevant Uploaded Document Context
+                ↓
+           Answer Generator
 ```
 
 ---
 
-## Step 2 — Process Documents
-
-Click:
+## INCORRECT
 
 ```text
-🚀 Process Documents
+Web Search Context
+        ↓
+Answer Generator
 ```
 
-The application will:
+---
+
+## AMBIGUOUS
 
 ```text
-Load PDFs
+Relevant Document Context
+          +
+Web Search Context
+          ↓
+Answer Generator
+```
+
+The answer generation prompt instructs the model to answer using the supplied context and avoid unsupported information.
+
+---
+
+# 🧩 LangGraph Workflow
+
+The backend is organized as a state-based LangGraph workflow.
+
+Main nodes:
+
+```text
+retrieve
    ↓
-Extract pages
+eval_each_doc
    ↓
-Create chunks
-   ↓
-Generate embeddings
-   ↓
-Create FAISS index
-```
-
-The UI also displays:
-
-```text
-Pages
-Chunks
+route_after_eval
+   │
+   ├── CORRECT ────────→ generate
+   │
+   ├── AMBIGUOUS ─────→ rewrite_query
+   │                         ↓
+   │                     web_search
+   │                         ↓
+   │                      generate
+   │
+   └── INCORRECT ──────→ rewrite_query
+                             ↓
+                         web_search
+                             ↓
+                          generate
 ```
 
 ---
 
-## Step 3 — Ask Questions
+# 📦 Technologies Used
 
-After processing the documents, use:
+| Technology                     | Purpose                         |
+| ------------------------------ | -------------------------------- |
+| Python                         | Backend development             |
+| Streamlit                      | Frontend and chat interface     |
+| LangChain                      | RAG and LLM components          |
+| LangGraph                      | Agentic workflow orchestration  |
+| FAISS                          | Vector similarity search        |
+| NVIDIA Nemotron Embeddings     | Document embeddings             |
+| OpenRouter                     | LLM access                      |
+| Tavily                         | Web search                      |
+| PyPDFLoader                    | PDF loading                     |
+| RecursiveCharacterTextSplitter | Document chunking               |
+| Pydantic                       | Structured LLM outputs          |
+| python-dotenv                  | Environment variable management |
 
-```text
-Ask something about your documents...
-```
+---
 
-For example:
+# ⚙️ Current Configuration
 
-```text
-What is batch normalization?
+## Document Chunking
+
+```python
+chunk_size = 900
+chunk_overlap = 150
 ```
 
 ---
 
-## Step 4 — Check the Verdict
+## Retrieval
 
-The application displays the source of the answer.
-
-### Document Context
-
-```text
-📚 Answer retrieved from the given document context.
-```
-
-### Web Context
-
-```text
-🌐 Answer retrieved from web context because
-the provided document context is not relevant.
-```
-
-### Both
-
-```text
-🔀 Answer generated using both the given document
-context and web context because the provided
-context was not sufficient.
+```python
+search_type = "similarity"
+k = 4
 ```
 
 ---
 
-# 🗂️ Multiple Document Handling
+## Retrieval Evaluation
 
-The application supports multiple PDFs in a single session.
+```python
+UPPER_TH = 0.7
+LOWER_TH = 0.3
+```
+
+---
+
+## Web Search
+
+```text
+Maximum results = 5
+```
+
+---
+
+## Embedding Model
+
+```text
+nvidia/nemotron-3-embed-1b
+```
+
+---
+
+## LLM
+
+```text
+openrouter/free
+```
+
+---
+
+# 📄 Multiple Document Processing
+
+Multiple PDFs can be uploaded and processed together.
 
 Example:
 
@@ -673,72 +669,256 @@ PDF 3
  └── Page 2
 ```
 
-All documents are combined into a single collection of chunks.
+All extracted documents are combined into a collection of LangChain documents.
 
-These chunks are embedded and stored in FAISS.
+They are then:
 
-The retriever can therefore search across all uploaded documents.
+```text
+Documents
+    ↓
+Chunks
+    ↓
+Embeddings
+    ↓
+FAISS
+```
+
+The retriever can therefore search across all uploaded PDFs within the current session.
 
 ---
 
-# 📊 Current Configuration
+# 🔐 Environment Variables
 
-### Chunking
+Create a `.env` file in the project root.
 
-```python
-chunk_size = 900
-chunk_overlap = 150
+```env
+NVIDIA_API_KEY=your_nvidia_api_key
+OPENROUTER_API_KEY=your_openrouter_api_key
+TAVILY_API_KEY=your_tavily_api_key
 ```
 
-### Retrieval
+Replace the values with your actual API keys.
 
-```python
-search_type = "similarity"
-k = 4
-```
+## Important
 
-### Evaluation Thresholds
+Never commit `.env` to GitHub.
 
-```python
-UPPER_TH = 0.7
-LOWER_TH = 0.3
-```
+Add the following to `.gitignore`:
 
-### Web Search
-
-```python
-max_results = 5
-```
-
-### Embedding Model
-
-```text
-nvidia/nemotron-3-embed-1b
-```
-
-### LLM
-
-```text
-openrouter/free
+```gitignore
+.env
+venv/
+__pycache__/
+*.pyc
 ```
 
 ---
 
-# 🧠 Why Use Retrieval Evaluation?
+# 📦 Installation
 
-A normal RAG pipeline typically looks like:
+## 1. Clone the Repository
+
+```bash
+git clone <your-repository-url>
+```
+
+Move into the project directory:
+
+```bash
+cd RAG-Document-Assistant
+```
+
+---
+
+# 2. Create Virtual Environment
+
+## Windows
+
+```bash
+python -m venv venv
+```
+
+Activate:
+
+```bash
+venv\Scripts\activate
+```
+
+---
+
+## Linux / macOS
+
+```bash
+python3 -m venv venv
+```
+
+Activate:
+
+```bash
+source venv/bin/activate
+```
+
+---
+
+# 3. Install Dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+If `requirements.txt` has not been created yet, install the main dependencies:
+
+```bash
+pip install streamlit
+pip install langchain
+pip install langchain-community
+pip install langchain-core
+pip install langchain-text-splitters
+pip install langchain-nvidia-ai-endpoints
+pip install langchain-openrouter
+pip install langgraph
+pip install faiss-cpu
+pip install pypdf
+pip install python-dotenv
+pip install tavily-python
+```
+
+---
+
+# ▶️ Running the Application
+
+Activate the virtual environment first.
+
+Then run:
+
+```bash
+streamlit run app.py
+```
+
+Streamlit will provide a local URL similar to:
+
+```text
+http://localhost:8501
+```
+
+Open the URL in your browser.
+
+---
+
+# 💬 Using the Application
+
+## Step 1 — Upload PDFs
+
+Use the sidebar to upload one or multiple PDF documents.
+
+Example:
+
+```text
+📄 Machine_Learning.pdf
+📄 Deep_Learning.pdf
+📄 NLP.pdf
+```
+
+---
+
+## Step 2 — Process Documents
+
+Click:
+
+```text
+🚀 Process Documents
+```
+
+The application performs:
+
+```text
+Load PDFs
+    ↓
+Extract Pages
+    ↓
+Create Chunks
+    ↓
+Generate Embeddings
+    ↓
+Create FAISS Index
+    ↓
+Initialize Retriever
+```
+
+The interface also displays the number of processed pages and chunks.
+
+---
+
+# Step 3 — Ask Questions
+
+After processing the documents, use the chat input.
+
+Example:
+
+```text
+What is batch normalization?
+```
+
+The question is passed to the Agentic RAG pipeline.
+
+---
+
+# Step 4 — View the Answer
+
+The application generates an answer and displays the retrieval verdict.
+
+Possible verdicts:
+
+```text
+CORRECT
+INCORRECT
+AMBIGUOUS
+```
+
+---
+
+# 🔎 Retrieval Transparency
+
+The application does not silently switch between document and web sources.
+
+Instead, it exposes the retrieval decision.
+
+For each answer, the interface can show:
+
+```text
+Verdict
+Reason
+```
+
+Example:
+
+```text
+Verdict: CORRECT
+
+Reason:
+The retrieved document directly contains information
+relevant to the user's question.
+```
+
+This makes the RAG decision easier to understand and debug.
+
+---
+
+# 🧠 Why Retrieval Evaluation?
+
+A basic RAG system typically works like:
 
 ```text
 Question
    ↓
 Retrieve
    ↓
-Generate Answer
+Generate
 ```
 
-This can cause problems when the retrieved documents are unrelated to the question.
+The problem is that a retriever may return documents that are semantically similar but do not actually contain enough information to answer the question.
 
-This project adds an evaluation stage:
+This project adds an LLM-based evaluation layer:
 
 ```text
 Question
@@ -747,47 +927,90 @@ Retrieve
    ↓
 Evaluate Relevance
    ↓
-┌───────────┬────────────┬────────────┐
-│ CORRECT   │ AMBIGUOUS  │ INCORRECT  │
-└───────────┴────────────┴────────────┘
+Determine Verdict
+   ↓
+┌────────────┬────────────┬────────────┐
+│  CORRECT   │ AMBIGUOUS  │  INCORRECT │
+└────────────┴────────────┴────────────┘
+       │           │             │
+       ▼           ▼             ▼
+    Document    Document +      Web
+    Context     Web Context    Context
 ```
 
-This allows the system to decide whether it should rely on the uploaded documents or use web search.
+This creates a more adaptive RAG workflow instead of always depending on retrieved documents.
 
 ---
 
-# 🔎 Retrieval Transparency
-
-The application exposes the retrieval decision to the user rather than silently switching between sources.
-
-Each generated answer has a corresponding verdict:
+# 🔄 Example End-to-End Workflow
 
 ```text
-CORRECT
-INCORRECT
-AMBIGUOUS
+                         USER
+                           │
+                           ▼
+                    Upload PDF(s)
+                           │
+                           ▼
+                  Process Documents
+                           │
+                           ▼
+                     PDF Loading
+                           │
+                           ▼
+                       Chunking
+                           │
+                           ▼
+                 NVIDIA Embeddings
+                           │
+                           ▼
+                        FAISS
+                           │
+                           ▼
+                    Ask Question
+                           │
+                           ▼
+                      Retrieval
+                           │
+                           ▼
+                LLM Relevance Check
+                           │
+              ┌────────────┼────────────┐
+              │            │            │
+              ▼            ▼            ▼
+           CORRECT      AMBIGUOUS    INCORRECT
+              │            │            │
+              │            ▼            ▼
+              │       Rewrite Query
+              │            │            │
+              │            ▼            │
+              │       Tavily Search     │
+              │            │            │
+              │            └─────┬──────┘
+              │                  │
+              ▼                  ▼
+        Document Context    Web Context
+              │                  │
+              │           + Document Context
+              │                  │
+              └─────────┬────────┘
+                        ▼
+                 Answer Generator
+                        │
+                        ▼
+                  Streamlit Chat
 ```
-
-The application also provides a retrieval-details section containing:
-
-```text
-Verdict
-Reason
-```
-
-This makes it easier to understand why the system selected a particular information source.
 
 ---
 
 # 🛠️ Future Improvements
 
-Possible improvements include:
+## 1. Conversational RAG
 
-### 1. Conversational RAG
+Currently, the Streamlit interface maintains the visual conversation history.
 
-Currently, the chat interface maintains the conversation visually.
+A future version can pass previous conversation turns into the retrieval and query-rewriting stages.
 
-A future version can pass previous conversation history into the retrieval/query-rewriting stage so questions such as:
+For example:
 
 ```text
 User:
@@ -800,18 +1023,18 @@ User:
 How is it different from layer normalization?
 ```
 
-can be interpreted using previous turns.
+The system could use previous turns to understand the context of follow-up questions.
 
 ---
 
-### 2. Source Citations
+## 2. Source Citations
 
-Display the source PDF and page number used for each answer.
+Display the exact source PDF and page number used for generating each answer.
 
 Example:
 
 ```text
-Sources
+Sources:
 
 📄 Deep_Learning.pdf — Page 12
 📄 Neural_Networks.pdf — Page 27
@@ -819,51 +1042,51 @@ Sources
 
 ---
 
-### 3. Persistent Vector Database
+## 3. Persistent Vector Database
 
-Currently, the vector index can be rebuilt when documents are processed.
+Currently, the FAISS index is created during document processing.
 
-A persistent vector database could be used for larger document collections.
-
----
-
-### 4. Streaming Responses
-
-Stream LLM responses token-by-token in the Streamlit interface.
+A future version could use a persistent vector database for larger document collections and reuse existing embeddings.
 
 ---
 
-### 5. Document Management
+## 4. Streaming Responses
 
-Allow users to:
+Stream LLM responses token-by-token in the Streamlit interface instead of waiting for the complete response.
+
+---
+
+## 5. Document Management
+
+Add functionality to:
 
 ```text
-Add documents
-Remove documents
-View documents
-Switch document collections
+Add Documents
+Remove Documents
+View Documents
+Switch Document Collections
 ```
 
 ---
 
-### 6. Better Retrieval
+## 6. Improved Retrieval
 
-Possible future retrieval improvements:
+Possible improvements include:
 
 ```text
 Hybrid Search
 BM25
 MMR Retrieval
-Reranking
-Metadata Filtering
 Cross-Encoder Reranking
+Metadata Filtering
+Query Expansion
 ```
 
 ---
 
 # 🔒 Security
 
-Do not expose API keys directly in Python files.
+API keys should never be hardcoded inside Python files.
 
 Use environment variables:
 
@@ -873,63 +1096,32 @@ OPENROUTER_API_KEY=...
 TAVILY_API_KEY=...
 ```
 
-And make sure `.env` is included in `.gitignore`.
+Make sure `.env` is included in `.gitignore`.
+
+Never upload API keys to GitHub.
 
 ---
 
-# 📌 Example Workflow
+# 🎯 Project Highlights
 
-```text
-                    USER
-                     │
-                     ▼
-              Upload PDFs
-                     │
-                     ▼
-          Process Documents
-                     │
-                     ▼
-             PDF Extraction
-                     │
-                     ▼
-                Chunking
-                     │
-                     ▼
-             NVIDIA Embeddings
-                     │
-                     ▼
-                  FAISS
-                     │
-                     ▼
-              Ask Question
-                     │
-                     ▼
-               Retrieval
-                     │
-                     ▼
-           LLM Relevance Check
-                     │
-           ┌─────────┼─────────┐
-           │         │         │
-           ▼         ▼         ▼
-        CORRECT   AMBIGUOUS  INCORRECT
-           │         │         │
-           │         ▼         ▼
-           │       Web Search
-           │         │         │
-           │         └────┬────┘
-           │              │
-           ▼              ▼
-        Document       Document
-        Context    +   Web Context
-           │              │
-           └──────┬───────┘
-                  ▼
-            Answer Generator
-                  │
-                  ▼
-             Streamlit Chat
-```
+This project demonstrates practical implementation of:
+
+* Retrieval-Augmented Generation
+* Agentic RAG
+* Multi-document question answering
+* Semantic vector search
+* FAISS vector databases
+* NVIDIA embedding models
+* LLM-based retrieval evaluation
+* LangGraph conditional workflows
+* Query rewriting
+* Web-augmented RAG
+* Tavily web search
+* Streamlit conversational UI
+* Multiple PDF processing
+* Conditional source selection
+* Structured LLM outputs
+* Retrieval transparency
 
 ---
 
@@ -943,25 +1135,8 @@ National Institute of Technology Srinagar
 
 ---
 
-# ⭐ Project Highlights
+# 📄 License
 
-This project demonstrates practical implementation of:
+This project is intended for educational and portfolio purposes.
 
-* Retrieval-Augmented Generation
-* Multi-document question answering
-* Semantic vector search
-* FAISS vector databases
-* NVIDIA embedding models
-* LLM-based retrieval evaluation
-* LangGraph conditional workflows
-* Query rewriting
-* Web-augmented RAG
-* Streamlit conversational UI
-* Multiple PDF processing
-* Source-aware retrieval decisions
-
----
-
-## 📄 License
-
-This project is intended for educational and portfolio purposes. Add an appropriate open-source license if you plan to distribute the project publicly.
+If you plan to distribute the project publicly, add an appropriate open-source license such as MIT.
